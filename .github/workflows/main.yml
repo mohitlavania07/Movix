@@ -1,0 +1,27 @@
+name: CI CD Pipeline
+
+on:
+  push:
+    branches:
+      - main
+
+jobs:
+  Pipeline_setup:
+    runs-on: runner-test
+    defaults:
+      run:
+        working-directory: /var/www/html/app
+
+steps:
+  - name: Checkout code
+    uses: actions/checkout@v3
+
+  - name: Insall dependencies
+    run: |
+      cd  /var/www/html/app
+      cp -r /home/ubuntu/actions-runner/_work/mohitlavania07/mohitlavania07/* /var/www/html/app/
+      sudo npm i
+      sudo npm run build
+      sudo npm run dev
+      sudo systemctl restart react-app
+      sudo systemctl restart nginx
