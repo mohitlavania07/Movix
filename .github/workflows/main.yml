@@ -7,7 +7,7 @@ on:
 
 jobs:
   Pipeline_setup:
-    runs-on: runner-test
+    runs-on: [self-hosted, runner-test]
     defaults:
       run:
         working-directory: /var/www/html/app
