@@ -1,27 +1,58 @@
-name: CI CD Pipeline
+name: React CI CD
 
 on:
   push:
     branches:
       - main
 
+permissions:
+  id-token: write
+  contents: read
+
 jobs:
-  Pipeline_setup:
-    runs-on: [self-hosted, runner-test]
-    defaults:
-      run:
-        working-directory: /var/www/html/app
+  build-and-deploy:
+    runs-on: ubuntu-latest
 
     steps:
-      - name: Checkout codes
-        uses: actions/checkout@v3
-    
-      - name: Insall dependencies
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 18
+          cache: npm
+
+      - name: Install dependencies
+        run: npm install
+
+      - name: Build React App
+        run: npm run build
+
+      - name: Zip build
         run: |
-          cd  /var/www/html/app
-          cp -r /home/ubuntu/actions-runner/_work/mohitlavania07/mohitlavania07/* /var/www/html/app/
-          sudo npm i
-          sudo npm run build
-          sudo npm run dev
-          sudo systemctl restart react-app
-          sudo systemctl restart nginx
+          zip -r react-build.zip build/
+
+      - name: Configure AWS Credentials (OIDC)
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: arn:aws:iam::877520722890:role/OIDC
+          aws-region: us-east-1
+
+      - name: Upload build to S3
+        run: |
+          aws s3 cp react-build.zip s3://mybucket310703/react-build.zip
+
+      - name: Deploy via SSM
+        run: |
+          aws ssm send-command \
+            --instance-ids "i-02de3b0f5c8a904b1" \
+            --document-name "AWS-RunShellScript" \
+            --parameters commands="[
+              'cd /var/www/',
+              'aws s3 cp s3://mybucket310703/react-build.zip .',
+              'unzip -o react-build.zip',
+              'sudo rm -rf /var/www/react/*',
+              'sudo cp -r build/* /var/www/react',
+              'sudo systemctl restart nginx'
+            ]"
