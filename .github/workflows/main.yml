@@ -1,23 +1,23 @@
-name: React CI CD
+name: React CI CD (Self Hosted)
 
 on:
   push:
     branches:
       - main
 
-permissions:
-  id-token: write
-  contents: read
-
 jobs:
   build-and-deploy:
-    runs-on: ubuntu-latest
+    runs-on: self-hosted
+
+    defaults:
+      run:
+        shell: bash
 
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
 
-      - name: Setup Node
+      - name: Use Node.js
         uses: actions/setup-node@v4
         with:
           node-version: 18
@@ -26,33 +26,14 @@ jobs:
       - name: Install dependencies
         run: npm install
 
-      - name: Build React App
+      - name: Build application
         run: npm run build
 
-      - name: Zip build
+      - name: Deploy build to server directory
         run: |
-          zip -r react-build.zip dist/
+          set -e
+          sudo rm -rf /var/www/react/*
+          sudo cp -r dist/* /var/www/react/
 
-      - name: Configure AWS Credentials (OIDC)
-        uses: aws-actions/configure-aws-credentials@v4
-        with:
-          role-to-assume: arn:aws:iam::877520722890:role/OIDC
-          aws-region: us-east-1
-
-      - name: Upload build to S3
-        run: |
-          aws s3 cp react-build.zip s3://mybucket310703/react-build.zip
-
-      - name: Deploy via SSM
-        run: |
-          aws ssm send-command \
-            --instance-ids "i-02de3b0f5c8a904b1" \
-            --document-name "AWS-RunShellScript" \
-            --parameters commands="[
-              'cd /var/www/',
-              'aws s3 cp s3://mybucket310703/react-build.zip .',
-              'unzip -o react-build.zip',
-              'sudo rm -rf /var/www/react/*',
-              'sudo cp -r dist/* /var/www/react',
-              'sudo systemctl restart nginx'
-            ]"
+      - name: Restart Nginx
+        run: sudo systemctl restart nginx
