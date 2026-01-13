@@ -31,7 +31,7 @@ jobs:
 
       - name: Zip build
         run: |
-          zip -r react-build.zip build/
+          zip -r react-build.zip dist/
 
       - name: Configure AWS Credentials (OIDC)
         uses: aws-actions/configure-aws-credentials@v4
