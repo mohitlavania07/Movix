@@ -53,6 +53,6 @@ jobs:
               'aws s3 cp s3://mybucket310703/react-build.zip .',
               'unzip -o react-build.zip',
               'sudo rm -rf /var/www/react/*',
-              'sudo cp -r build/* /var/www/react',
+              'sudo cp -r dist/* /var/www/react',
               'sudo systemctl restart nginx'
             ]"
