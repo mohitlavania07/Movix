@@ -1,0 +1,132 @@
+name: React Production Promotion
+
+on:
+  workflow_dispatch:
+    inputs:
+
+      source_run_id:
+        description: "Enter the successful Staging workflow Run ID"
+        required: true
+        type: string
+
+      commit_sha:
+        description: "Enter the exact commit SHA tested on Staging"
+        required: true
+        type: string
+
+
+permissions:
+  contents: read
+  actions: read
+
+
+jobs:
+
+  validate-release:
+    name: Validate Release Candidate
+    runs-on: ubuntu-latest
+
+    steps:
+
+      - name: Validate inputs
+        run: |
+          set -e
+
+          if [ -z "${{ inputs.source_run_id }}" ]; then
+            echo "source_run_id is required."
+            exit 1
+          fi
+
+          if [ -z "${{ inputs.commit_sha }}" ]; then
+            echo "commit_sha is required."
+            exit 1
+          fi
+
+          echo "Source Run ID : ${{ inputs.source_run_id }}"
+          echo "Commit SHA    : ${{ inputs.commit_sha }}"
+
+
+  production:
+    name: Production Deployment
+
+    needs:
+      - validate-release
+
+    runs-on: ubuntu-latest
+
+    environment:
+      name: Production
+
+    steps:
+
+      - name: Download exact staging-tested artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: react-build-${{ inputs.commit_sha }}
+          run-id: ${{ inputs.source_run_id }}
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Verify downloaded artifact
+        run: |
+          set -e
+
+          ls -lh
+
+          test -f "react-build-${{ inputs.commit_sha }}.tar.gz"
+
+          echo "Exact staging-tested artifact found."
+
+      - name: Extract artifact
+        run: |
+          mkdir deploy
+
+          tar -xzf \
+            "react-build-${{ inputs.commit_sha }}.tar.gz" \
+            -C deploy
+
+      - name: Show release candidate
+        run: |
+          echo "=========================================="
+          echo "Production Release Candidate"
+          echo "=========================================="
+          echo "Commit SHA:"
+          echo "${{ inputs.commit_sha }}"
+          echo ""
+          echo "Source Staging Workflow Run:"
+          echo "${{ inputs.source_run_id }}"
+          echo "=========================================="
+
+      - name: Deploy to Production
+        run: |
+          echo "Deploying SAME staging-tested artifact."
+          echo "No rebuild is happening."
+
+          # Later on your production self-hosted runner:
+          #
+          # sudo rm -rf /var/www/react/*
+          # sudo cp -r deploy/dist/* /var/www/react/
+
+      - name: Restart Nginx
+        run: |
+          echo "Nginx restart would happen here."
+
+          # Later:
+          #
+          # sudo nginx -t
+          # sudo systemctl reload nginx
+
+      - name: Production health check
+        run: |
+          echo "Production health check would happen here."
+
+          # Later:
+          #
+          # curl --fail https://example.com
+
+      - name: Deployment summary
+        run: |
+          echo "## Production Deployment" >> "$GITHUB_STEP_SUMMARY"
+          echo "" >> "$GITHUB_STEP_SUMMARY"
+          echo "Commit: \`${{ inputs.commit_sha }}\`" >> "$GITHUB_STEP_SUMMARY"
+          echo "Source staging run: \`${{ inputs.source_run_id }}\`" >> "$GITHUB_STEP_SUMMARY"
+          echo "Artifact promoted without rebuilding." >> "$GITHUB_STEP_SUMMARY"
