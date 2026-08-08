@@ -35,9 +35,27 @@ jobs:
           test -d dist
           echo "React build completed successfully."
 
+
+  Staging:
+      name: Staging Deployment
+      needs: build
+  
+      runs-on: ubuntu-latest
+  
+      environment:
+        name: production
+  
+      steps:
+  
+        - name: Staging deployment started
+          run: |
+            echo "Production deployment approved."
+            echo "This is where deployment commands will run."
+
+          
   production:
     name: Production Deployment
-    needs: build
+    needs: Staging
 
     runs-on: ubuntu-latest
 
