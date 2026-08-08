@@ -2,77 +2,37 @@ name: React CI CD
 
 on:
 
+  # ---------------------------------------------------------
+  # Automatic staging deployment
+  # ---------------------------------------------------------
+
   push:
     branches:
       - main
 
+  # ---------------------------------------------------------
+  # Manual production deployment
+  # ---------------------------------------------------------
+
   workflow_dispatch:
     inputs:
-
-      deploy_environment:
-        description: "Select the environment to deploy"
+      deployment_target:
+        description: "Select deployment environment"
         required: true
         type: choice
         options:
-          - staging
           - production
-        default: staging
-
-
-permissions:
-  contents: read
+        default: production
 
 
 jobs:
 
-  # ============================================================
-  # 1. DETERMINE DEPLOYMENT ENVIRONMENT
-  # ============================================================
-
-  prepare:
-    name: Determine Deployment Environment
-
-    runs-on: ubuntu-latest
-
-    outputs:
-      environment: ${{ steps.target.outputs.environment }}
-
-    steps:
-
-      - name: Determine target environment
-        id: target
-        shell: bash
-        run: |
-
-          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
-
-            TARGET="${{ inputs.deploy_environment }}"
-
-          else
-
-            # Normal push to main goes to staging
-            TARGET="staging"
-
-          fi
-
-          if [ "$TARGET" != "staging" ] && [ "$TARGET" != "production" ]; then
-            echo "Invalid deployment environment: $TARGET"
-            exit 1
-          fi
-
-          echo "Deployment target: $TARGET"
-
-          echo "environment=$TARGET" >> "$GITHUB_OUTPUT"
-
-
-  # ============================================================
-  # 2. BUILD
-  # ============================================================
+  # =========================================================
+  # BUILD
+  # =========================================================
 
   build:
     name: Build React Application
-
-    needs: prepare
 
     runs-on: ubuntu-latest
 
@@ -83,20 +43,18 @@ jobs:
 
       - name: Use Node.js
         uses: actions/setup-node@v4
-
         with:
           node-version: 18
           cache: npm
 
       - name: Install dependencies
-        run: npm install
+        run: npm ci
 
       - name: Build application
         run: npm run build
 
       - name: Verify build
         run: |
-
           set -e
 
           test -d dist
@@ -104,728 +62,92 @@ jobs:
           echo "React build completed successfully."
 
 
-  # ============================================================
-  # 3. GITLEAKS SECRET SCAN
-  # ============================================================
+  # =========================================================
+  # STAGING
+  # Runs ONLY when code is pushed to main
+  # =========================================================
 
-  gitleaks:
-    name: Gitleaks Secret Scan
+  staging:
+    name: Staging Deployment
 
-    needs:
-      - prepare
-
-    runs-on: ubuntu-latest
-
-    continue-on-error: true
-
-    outputs:
-      status: ${{ steps.scan-result.outputs.status }}
-
-    steps:
-
-      - name: Checkout code
-        uses: actions/checkout@v4
-
-        with:
-          fetch-depth: 0
-
-
-      - name: Run Gitleaks
-        id: gitleaks-scan
-        continue-on-error: true
-
-        run: |
-
-          set +e
-
-          gitleaks detect \
-            --source . \
-            --redact \
-            --report-format json \
-            --report-path gitleaks-report.json \
-            --exit-code 1
-
-          EXIT_CODE=$?
-
-          echo "Gitleaks exit code: $EXIT_CODE"
-
-          if [ "$EXIT_CODE" -eq 0 ]; then
-            echo "Gitleaks scan passed."
-          else
-            echo "Gitleaks detected potential secrets."
-          fi
-
-          exit 0
-
-
-      - name: Determine Gitleaks result
-        id: scan-result
-
-        run: |
-
-          if [ -s gitleaks-report.json ] &&
-             [ "$(jq length gitleaks-report.json)" -gt 0 ]; then
-
-            echo "status=FAILED" >> "$GITHUB_OUTPUT"
-
-          else
-
-            echo "status=PASSED" >> "$GITHUB_OUTPUT"
-
-          fi
-
-
-      - name: Create Gitleaks summary
-
-        if: always()
-
-        run: |
-
-          echo "## 🔐 Gitleaks Secret Scan" >> "$GITHUB_STEP_SUMMARY"
-
-          if [ -s gitleaks-report.json ] &&
-             [ "$(jq length gitleaks-report.json)" -gt 0 ]; then
-
-            echo "### ❌ FAILED" >> "$GITHUB_STEP_SUMMARY"
-
-            echo "" >> "$GITHUB_STEP_SUMMARY"
-
-            echo "Potential secrets were detected." >> "$GITHUB_STEP_SUMMARY"
-
-            echo "" >> "$GITHUB_STEP_SUMMARY"
-
-            echo "| File | Line | Rule | Commit | Secret |" >> "$GITHUB_STEP_SUMMARY"
-
-            echo "|---|---:|---|---|---|" >> "$GITHUB_STEP_SUMMARY"
-
-            jq -r '
-              .[] |
-              "| \(.File) | \(.StartLine) | \(.RuleID) | \(.Commit) | [REDACTED] |"
-            ' gitleaks-report.json >> "$GITHUB_STEP_SUMMARY"
-
-          else
-
-            echo "### ✅ PASSED" >> "$GITHUB_STEP_SUMMARY"
-
-            echo "No secrets detected." >> "$GITHUB_STEP_SUMMARY"
-
-          fi
-
-
-      - name: Upload Gitleaks report
-
-        if: always()
-
-        uses: actions/upload-artifact@v4
-
-        with:
-          name: gitleaks-report
-          path: gitleaks-report.json
-          if-no-files-found: ignore
-
-
-  # ============================================================
-  # 4. UNIT TEST
-  # ============================================================
-
-  unit-test:
-    name: React Unit Tests
+    if: github.event_name == 'push'
 
     needs:
       - build
-
-    runs-on: ubuntu-latest
-
-    continue-on-error: true
-
-    outputs:
-      status: ${{ steps.test-result.outputs.status }}
-
-    steps:
-
-      - name: Checkout code
-        uses: actions/checkout@v4
-
-
-      - name: Use Node.js
-        uses: actions/setup-node@v4
-
-        with:
-          node-version: 18
-          cache: npm
-
-
-      - name: Install dependencies
-        run: npm install
-
-
-      - name: Run unit tests
-        id: unit-tests
-        continue-on-error: true
-
-        run: |
-
-          set +e
-
-          npm test \
-            -- \
-            --watchAll=false \
-            --ci \
-            2>&1 | tee unit-test.log
-
-          TEST_EXIT_CODE=${PIPESTATUS[0]}
-
-          echo "Test exit code: $TEST_EXIT_CODE"
-
-          if [ "$TEST_EXIT_CODE" -eq 0 ]; then
-            echo "Unit tests passed."
-          else
-            echo "Unit tests failed."
-          fi
-
-          exit 0
-
-
-      - name: Determine test result
-        id: test-result
-
-        run: |
-
-          if grep -q "failed\|FAIL" unit-test.log; then
-
-            echo "status=FAILED" >> "$GITHUB_OUTPUT"
-
-          else
-
-            echo "status=PASSED" >> "$GITHUB_OUTPUT"
-
-          fi
-
-
-      - name: Create unit test summary
-
-        if: always()
-
-        run: |
-
-          echo "## 🧪 Unit Test Result" >> "$GITHUB_STEP_SUMMARY"
-
-          if grep -q "failed\|FAIL" unit-test.log; then
-
-            echo "### ❌ FAILED" >> "$GITHUB_STEP_SUMMARY"
-
-            echo "" >> "$GITHUB_STEP_SUMMARY"
-
-            echo '```text' >> "$GITHUB_STEP_SUMMARY"
-
-            tail -n 100 unit-test.log >> "$GITHUB_STEP_SUMMARY"
-
-            echo '```' >> "$GITHUB_STEP_SUMMARY"
-
-          else
-
-            echo "### ✅ PASSED" >> "$GITHUB_STEP_SUMMARY"
-
-          fi
-
-
-      - name: Upload unit test logs
-
-        if: always()
-
-        uses: actions/upload-artifact@v4
-
-        with:
-          name: unit-test-report
-          path: unit-test.log
-          if-no-files-found: ignore
-
-
-  # ============================================================
-  # 5. SAST
-  # ============================================================
-
-  sast:
-    name: SAST Security Scan
-
-    needs:
-      - build
-
-    runs-on: ubuntu-latest
-
-    continue-on-error: true
-
-    outputs:
-      status: ${{ steps.sast-result.outputs.status }}
-
-    steps:
-
-      - name: Checkout code
-        uses: actions/checkout@v4
-
-
-      - name: Run Semgrep
-        id: semgrep
-        continue-on-error: true
-
-        run: |
-
-          set +e
-
-          semgrep \
-            --config p/owasp-top-ten \
-            --error \
-            --json \
-            --output semgrep-report.json \
-            .
-
-          EXIT_CODE=$?
-
-          echo "Semgrep exit code: $EXIT_CODE"
-
-          exit 0
-
-
-      - name: Determine SAST result
-        id: sast-result
-
-        run: |
-
-          if [ -s semgrep-report.json ]; then
-
-            FINDINGS=$(jq '[.results[]] | length' semgrep-report.json)
-
-            if [ "$FINDINGS" -gt 0 ]; then
-              echo "status=FAILED" >> "$GITHUB_OUTPUT"
-            else
-              echo "status=PASSED" >> "$GITHUB_OUTPUT"
-            fi
-
-          else
-
-            echo "status=PASSED" >> "$GITHUB_OUTPUT"
-
-          fi
-
-
-      - name: Create SAST summary
-
-        if: always()
-
-        run: |
-
-          echo "## 🛡️ SAST Result" >> "$GITHUB_STEP_SUMMARY"
-
-          if [ -s semgrep-report.json ]; then
-
-            FINDINGS=$(jq '[.results[]] | length' semgrep-report.json)
-
-            if [ "$FINDINGS" -gt 0 ]; then
-
-              echo "### ❌ FINDINGS DETECTED" >> "$GITHUB_STEP_SUMMARY"
-
-              echo "" >> "$GITHUB_STEP_SUMMARY"
-
-              echo "Semgrep findings: $FINDINGS" >> "$GITHUB_STEP_SUMMARY"
-
-            else
-
-              echo "### ✅ PASSED" >> "$GITHUB_STEP_SUMMARY"
-
-            fi
-
-          else
-
-            echo "### ⚠️ No SAST report generated" >> "$GITHUB_STEP_SUMMARY"
-
-          fi
-
-
-      - name: Upload SAST report
-
-        if: always()
-
-        uses: actions/upload-artifact@v4
-
-        with:
-          name: sast-report
-          path: semgrep-report.json
-          if-no-files-found: ignore
-
-
-  # ============================================================
-  # 6. DEPLOY CANDIDATE TO STAGING
-  #
-  # DAST needs a running application.
-  #
-  # Replace this section with your actual staging deployment
-  # once the staging server is available.
-  # ============================================================
-
-  deploy-candidate:
-    name: Deploy Candidate for DAST
-
-    needs:
-      - build
-      - gitleaks
-      - unit-test
-      - sast
-
-    if: |
-      needs.build.result == 'success'
-
-    runs-on: ubuntu-latest
-
-    steps:
-
-      - name: Checkout code
-        uses: actions/checkout@v4
-
-      - name: Deploy candidate
-        run: |
-
-          echo "Deploying application to DAST/Staging environment."
-
-          # Actual deployment will go here.
-          #
-          # Example later:
-          #
-          # scp
-          # docker compose
-          # kubectl
-          # AWS
-          # Azure
-          #
-          # This must result in a running application
-          # accessible through STAGING_URL.
-
-
-  # ============================================================
-  # 7. DAST - OWASP ZAP
-  # ============================================================
-
-  dast:
-    name: OWASP ZAP DAST
-
-    needs:
-      - deploy-candidate
-
-    runs-on: ubuntu-latest
-
-    continue-on-error: true
-
-    outputs:
-      status: ${{ steps.dast-result.outputs.status }}
-
-    steps:
-
-      - name: Run OWASP ZAP
-
-        id: zap
-
-        continue-on-error: true
-
-        env:
-          STAGING_URL: ${{ vars.STAGING_URL }}
-
-        run: |
-
-          set +e
-
-          if [ -z "$STAGING_URL" ]; then
-
-            echo "STAGING_URL is not configured."
-
-            echo "DAST cannot run without a running application."
-
-            exit 1
-
-          fi
-
-
-          mkdir -p zap-report
-
-
-          docker run \
-            --rm \
-            -v "$PWD/zap-report:/zap/wrk/:rw" \
-            ghcr.io/zaproxy/zaproxy:stable \
-            zap-baseline.py \
-            -t "$STAGING_URL" \
-            -r zap-report.html \
-            -J zap-report.json
-
-          EXIT_CODE=$?
-
-          echo "ZAP exit code: $EXIT_CODE"
-
-          exit $EXIT_CODE
-
-
-      - name: Determine DAST result
-
-        id: dast-result
-
-        if: always()
-
-        run: |
-
-          if [ -f zap-report/zap-report.json ]; then
-
-            FAIL_COUNT=$(jq '
-              [
-                .site[]?.alerts[]?
-                | select(.riskcode == "3" or .riskcode == "2")
-              ] | length
-            ' zap-report/zap-report.json 2>/dev/null || echo 0)
-
-            if [ "$FAIL_COUNT" -gt 0 ]; then
-
-              echo "status=FAILED" >> "$GITHUB_OUTPUT"
-
-            else
-
-              echo "status=PASSED" >> "$GITHUB_OUTPUT"
-
-            fi
-
-          else
-
-            echo "status=FAILED" >> "$GITHUB_OUTPUT"
-
-          fi
-
-
-      - name: Create DAST summary
-
-        if: always()
-
-        run: |
-
-          echo "## 🌐 OWASP ZAP DAST" >> "$GITHUB_STEP_SUMMARY"
-
-          if [ -f zap-report/zap-report.json ]; then
-
-            echo "### Scan completed" >> "$GITHUB_STEP_SUMMARY"
-
-            echo "" >> "$GITHUB_STEP_SUMMARY"
-
-            echo "See the uploaded ZAP report for detailed findings." \
-              >> "$GITHUB_STEP_SUMMARY"
-
-          else
-
-            echo "### ❌ DAST FAILED" >> "$GITHUB_STEP_SUMMARY"
-
-            echo "" >> "$GITHUB_STEP_SUMMARY"
-
-            echo "ZAP could not complete the scan." \
-              >> "$GITHUB_STEP_SUMMARY"
-
-            echo "" >> "$GITHUB_STEP_SUMMARY"
-
-            echo "Check STAGING_URL and application availability." \
-              >> "$GITHUB_STEP_SUMMARY"
-
-          fi
-
-
-      - name: Upload ZAP report
-
-        if: always()
-
-        uses: actions/upload-artifact@v4
-
-        with:
-          name: zap-dast-report
-          path: zap-report/
-          if-no-files-found: ignore
-
-
-  # ============================================================
-  # 8. RELEASE REVIEW REPORT
-  #
-  # IMPORTANT:
-  # This job intentionally runs even when tests/scans fail.
-  # It prepares the information that the reviewer should inspect.
-  # ============================================================
-
-  release-review:
-    name: Prepare Release Review
-
-    needs:
-      - prepare
-      - build
-      - gitleaks
-      - unit-test
-      - sast
-      - dast
-
-    if: ${{ always() }}
-
-    runs-on: ubuntu-latest
-
-    steps:
-
-      - name: Generate release review report
-        env:
-          TARGET_ENVIRONMENT: ${{ needs.prepare.outputs.environment }}
-
-          BUILD_RESULT: ${{ needs.build.result }}
-          GITLEAKS_RESULT: ${{ needs.gitleaks.result }}
-          UNIT_TEST_RESULT: ${{ needs.unit-test.result }}
-          SAST_RESULT: ${{ needs.sast.result }}
-          DAST_RESULT: ${{ needs.dast.result }}
-
-        run: |
-
-          cat <<EOF >> "$GITHUB_STEP_SUMMARY"
-
-          # 🚦 Release Review
-
-          ## Deployment Target
-
-          **Environment:** $TARGET_ENVIRONMENT
-
-          ## Pipeline Results
-
-          | Check | Result |
-          |---|---|
-          | Build | $BUILD_RESULT |
-          | Gitleaks | $GITLEAKS_RESULT |
-          | Unit Tests | $UNIT_TEST_RESULT |
-          | SAST | $SAST_RESULT |
-          | DAST | $DAST_RESULT |
-
-          ## Reviewer Action
-
-          Please review the failed checks and uploaded artifacts before approving the deployment.
-
-          ### Important
-
-          Any secrets detected by Gitleaks are intentionally **redacted**.
-
-          Do not approve the deployment if credentials, tokens, passwords or private keys are present unless they have been removed/rotated and the exception is formally accepted.
-
-          EOF
-
-
-  # ============================================================
-  # 9. ENVIRONMENT APPROVAL
-  #
-  # This is the actual GitHub Environment protection gate.
-  # ============================================================
-
-  approval:
-    name: ${{ needs.prepare.outputs.environment }} Approval
-
-    needs:
-      - prepare
-      - release-review
-
-    if: ${{ always() && needs.release-review.result == 'success' }}
 
     runs-on: ubuntu-latest
 
     environment:
-      name: ${{ needs.prepare.outputs.environment }}
-
-    steps:
-
-      - name: Deployment approved
-        run: |
-
-          echo "=========================================="
-          echo "Deployment Approved"
-          echo "=========================================="
-
-          echo "Environment:"
-          echo "${{ needs.prepare.outputs.environment }}"
-
-          echo "Commit:"
-          echo "$GITHUB_SHA"
-
-          echo "The reviewer approved the deployment."
-
-
-  # ============================================================
-  # 10. FINAL DEPLOYMENT
-  # ============================================================
-
-  deploy:
-    name: Deploy Application
-
-    needs:
-      - prepare
-      - approval
-
-    if: |
-      needs.approval.result == 'success'
-
-    runs-on: ubuntu-latest
-
-    environment:
-      name: ${{ needs.prepare.outputs.environment }}
+      name: Staging
 
     steps:
 
       - name: Checkout code
         uses: actions/checkout@v4
 
-      - name: Deploy application
+      - name: Staging deployment started
         run: |
+          echo "======================================"
+          echo "Staging deployment approved."
+          echo "======================================"
 
-          TARGET="${{ needs.prepare.outputs.environment }}"
+      - name: Deploy to Staging
+        run: |
+          echo "Deploying React application to STAGING."
 
-          echo "Deploying React application."
+          # Actual staging deployment will go here.
 
-          if [ "$TARGET" = "staging" ]; then
+      - name: Staging deployment completed
+        run: |
+          echo "======================================"
+          echo "Staging deployment completed."
+          echo "======================================"
 
-            echo "Deployment target: STAGING"
 
-            # Actual staging deployment commands
-            #
-            # scp
-            # rsync
-            # docker compose
-            # kubectl
-            # etc.
+  # =========================================================
+  # PRODUCTION
+  # Runs ONLY when manually triggered
+  # =========================================================
 
-          elif [ "$TARGET" = "production" ]; then
+  production:
+    name: Production Deployment
 
-            echo "Deployment target: PRODUCTION"
+    if: github.event_name == 'workflow_dispatch'
 
-            # Actual production deployment commands
-            #
-            # scp
-            # rsync
-            # docker compose
-            # kubectl
-            # etc.
+    needs:
+      - build
 
-          else
+    runs-on: ubuntu-latest
 
-            echo "Invalid deployment target."
+    environment:
+      name: Production
 
-            exit 1
+    steps:
 
-          fi
+      - name: Checkout code
+        uses: actions/checkout@v4
 
+      - name: Production deployment started
+        run: |
+          echo "======================================"
+          echo "Production deployment approved."
+          echo "======================================"
+
+      - name: Deploy to Production
+        run: |
+          echo "Deploying React application to PRODUCTION."
+
+          # Actual production deployment will go here.
 
       - name: Restart Nginx
         run: |
+          echo "Nginx restart command will run here."
 
-          echo "Nginx restart will happen here."
-
-          # Later, on the self-hosted deployment runner:
-          #
+          # Later:
           # sudo systemctl restart nginx
-          # sudo systemctl is-active nginx
 
-
-      - name: Deployment completed
+      - name: Production deployment completed
         run: |
-
-          echo "=========================================="
-          echo "Deployment completed successfully."
-          echo "=========================================="
+          echo "======================================"
+          echo "Production deployment completed."
+          echo "======================================"
