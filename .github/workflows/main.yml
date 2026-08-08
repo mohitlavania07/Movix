@@ -55,7 +55,7 @@ jobs:
           
   production:
     name: Production Deployment
-    needs: Staging
+    needs: build
 
     runs-on: ubuntu-latest
 
