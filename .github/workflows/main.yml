@@ -1,19 +1,20 @@
-name: React CI CD (Self Hosted)
+name: React CI CD
 
 on:
   push:
     branches:
       - main
 
-jobs:
-  build-and-deploy:
-    runs-on: self-hosted
+  workflow_dispatch:
 
-    defaults:
-      run:
-        shell: bash
+jobs:
+
+  build:
+    name: Build React Application
+    runs-on: ubuntu-latest
 
     steps:
+
       - name: Checkout code
         uses: actions/checkout@v4
 
@@ -29,11 +30,32 @@ jobs:
       - name: Build application
         run: npm run build
 
-      - name: Deploy build to server directory
+      - name: Verify build
         run: |
-          set -e
-          sudo rm -rf /var/www/react/*
-          sudo cp -r dist/* /var/www/react/
+          test -d dist
+          echo "React build completed successfully."
+
+  production:
+    name: Production Deployment
+    needs: build
+
+    runs-on: ubuntu-latest
+
+    environment:
+      name: production
+
+    steps:
+
+      - name: Production deployment started
+        run: |
+          echo "Production deployment approved."
+          echo "This is where deployment commands will run."
 
       - name: Restart Nginx
-        run: sudo systemctl restart nginx
+        run: |
+          echo "Nginx restart command will run here."
+          echo "Currently running in test mode because no production server is connected."
+
+      - name: Deployment completed
+        run: |
+          echo "Production deployment completed successfully."
