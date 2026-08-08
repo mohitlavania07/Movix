@@ -6,8 +6,21 @@ on:
       - main
 
   workflow_dispatch:
+    inputs:
+      deploy_environment:
+        description: "Select the environment to deploy"
+        required: true
+        type: choice
+        options:
+          - staging
+          - production
+        default: staging
 
 jobs:
+
+  # =========================================================
+  # BUILD
+  # =========================================================
 
   build:
     name: Build React Application
@@ -25,55 +38,75 @@ jobs:
           cache: npm
 
       - name: Install dependencies
-        run: npm install
+        run: npm ci
 
       - name: Build application
         run: npm run build
 
       - name: Verify build
         run: |
+          set -e
+
           test -d dist
+
           echo "React build completed successfully."
 
 
-  Staging:
-      name: Staging Deployment
-      needs: build
-  
-      runs-on: ubuntu-latest
-  
-      environment:
-        name: Staging
-  
-      steps:
-  
-        - name: Staging deployment started
-          run: |
-            echo "Production deployment approved."
-            echo "This is where deployment commands will run."
+  # =========================================================
+  # DYNAMIC DEPLOYMENT
+  # =========================================================
 
-          
-  production:
-    name: Production Deployment
-    needs: Staging
+  deploy:
+    name: Deploy Application
+    needs: build
 
     runs-on: ubuntu-latest
 
     environment:
-      name: production
+      name: ${{ github.event_name == 'workflow_dispatch' && inputs.deploy_environment || 'staging' }}
 
     steps:
 
-      - name: Production deployment started
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Show deployment target
         run: |
-          echo "Production deployment approved."
-          echo "This is where deployment commands will run."
+          echo "======================================"
+          echo "Deployment Started"
+          echo "======================================"
+          echo "Environment: ${{ github.event_name == 'workflow_dispatch' && inputs.deploy_environment || 'staging' }}"
+          echo "Commit: $GITHUB_SHA"
+          echo "Branch: $GITHUB_REF_NAME"
+          echo "======================================"
+
+      - name: Deploy application
+        run: |
+          echo "Deploying React application..."
+
+          if [ "${{ github.event_name == 'workflow_dispatch' && inputs.deploy_environment || 'staging' }}" = "staging" ]; then
+
+            echo "Deploying to STAGING"
+            echo "Staging deployment commands will run here."
+
+          elif [ "${{ github.event_name == 'workflow_dispatch' && inputs.deploy_environment || 'staging' }}" = "production" ]; then
+
+            echo "Deploying to PRODUCTION"
+            echo "Production deployment commands will run here."
+
+          else
+
+            echo "Invalid deployment environment."
+            exit 1
+
+          fi
 
       - name: Restart Nginx
         run: |
           echo "Nginx restart command will run here."
-          echo "Currently running in test mode because no production server is connected."
 
       - name: Deployment completed
         run: |
-          echo "Production deployment completed successfully."
+          echo "======================================"
+          echo "Deployment completed successfully."
+          echo "======================================"
